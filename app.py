@@ -7,7 +7,7 @@ from streamlit.components.v1 import html
 
 # Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_KEY")
+openai.api_key = os.getenv("OPENAI_KEY") or st.secrets.get("OPENAI_KEY")
 
 # Page config to move title to top-left
 st.set_page_config(page_title="Benchmarking (OpenAI)", layout="wide")
