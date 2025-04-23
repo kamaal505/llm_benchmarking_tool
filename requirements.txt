@@ -1,0 +1,6 @@
+streamlit
+openai
+firebase-admin
+protobuf==4.25.3
+python-dotenv
+requests

@@ -1,0 +1,4 @@
+.env
+venv/
+firebase_credentials.json
+authorized_emails.txt
