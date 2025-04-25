@@ -8,6 +8,7 @@ from streamlit.components.v1 import html
 import firebase_admin
 from firebase_admin import credentials, firestore
 import json
+from datetime import datetime
 
 try:
     from auth_module import login_user
@@ -137,6 +138,38 @@ else:
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 st.session_state["model_results"] = list(executor.map(fetch_response, models))
+
+        # 🔍 Log usage per day, per prompt
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        doc_id = f"{user_email}_{today}"
+        doc_ref = db.collection("daily_usage").document(doc_id)
+
+        # Fetch existing usage data if any
+        doc = doc_ref.get()
+        data = doc.to_dict() if doc.exists else {}
+
+        prompt_key = raw_prompt.strip()
+
+        existing_prompt_data = data.get("prompts", {}).get(prompt_key, {
+            "models": [],
+            "llm_calls": 0
+        })
+
+        updated_models = list(set(existing_prompt_data["models"] + models))
+        updated_calls = existing_prompt_data["llm_calls"] + 1
+
+        doc_ref.set({
+            "user_email": user_email,
+            "date": today,
+            "last_updated": firestore.SERVER_TIMESTAMP,
+            "prompts": {
+                **data.get("prompts", {}),
+                prompt_key: {
+                    "models": updated_models,
+                    "llm_calls": updated_calls
+                }
+            }
+        }, merge=True)
 
     model_evaluations = []
     results = st.session_state.get("model_results", [])
