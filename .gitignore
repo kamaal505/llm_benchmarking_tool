@@ -1,4 +1,6 @@
 .env
 venv/
 firebase_credentials.json
-authorized_emails.txt
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
