@@ -18,7 +18,7 @@ if "authenticated_user" not in st.session_state:
     st.stop()
 
 if st.session_state.get("user_role") == "reviewer":
-    st.switch_page("reviewer_dashboard.py")
+    st.switch_page("pages/reviewer_dashboard.py")
 
 # --- UI Header ---
 st.markdown("<h4>Benchmarking (Internal Testing)</h4>", unsafe_allow_html=True)
