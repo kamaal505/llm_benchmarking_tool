@@ -2,14 +2,15 @@ import streamlit as st
 import hashlib
 from firebase_admin import firestore
 
-# --- Hashing ---
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-
-# --- Firestore Login ---
 def login_user(db):
     st.markdown("### Login")
+
+    # Role picker
+    selected_role = st.radio("Login as", ["Researcher", "Reviewer"], horizontal=True)
+    requested_role = "reviewer" if selected_role == "Reviewer" else "user"
 
     with st.form("login_form"):
         email = st.text_input("Work Email").strip().lower()
@@ -40,19 +41,26 @@ def login_user(db):
         st.error("This email is not yet authorized to access the app.")
         st.stop()
 
-    # First-time password setup or blank password case
+    # Ensure roles list exists
+    roles = user_data.get("roles", ["user"])  # fallback to single-role
+    if requested_role not in roles:
+        st.error(f"You are not authorized to log in as a {requested_role}.")
+        st.stop()
+
+    # First-time password setup
     if not user_data.get("password"):
         user_ref.update({"password": hash_password(password)})
         st.info("Password set. Please click the login button to continue.")
         st.session_state.authenticated_user = email
-        st.session_state.user_role = user_data.get("role", "user")
+        st.session_state.user_role = requested_role
         st.stop()
 
     if user_data["password"] != hash_password(password):
         st.error("Incorrect password.")
         st.stop()
 
-    st.info("User authenticated. Please click the login button to continue.")
+    # ✅ Authentication successful
     st.session_state.authenticated_user = email
-    st.session_state.user_role = user_data.get("role", "user")
+    st.session_state.user_role = requested_role
+    st.info("User authenticated. Please click the login button to continue.")
     st.stop()
