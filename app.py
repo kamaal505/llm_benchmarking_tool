@@ -17,6 +17,8 @@ if "authenticated_user" not in st.session_state:
     login_user(db)
     st.stop()
 
+user_email = st.session_state["authenticated_user"]
+
 if st.session_state.get("user_role") == "reviewer":
     st.switch_page("pages/reviewer_dashboard.py")
 
