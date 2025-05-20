@@ -20,83 +20,105 @@ if st.session_state["user_role"] != "reviewer":
 reviewer_email = st.session_state["authenticated_user"]
 st.title("📋 Reviewer Dashboard")
 
-# --- Group submissions by researcher ---
+# --- Helper Function ---
 @st.cache_data
-def get_submissions_by_user():
+def load_submissions_grouped():
     submissions = db.collection("submissions").order_by("submitted_at", direction="DESCENDING").stream()
     grouped = {}
 
     for doc in submissions:
         data = doc.to_dict()
         user = data["user_email"]
+        data["id"] = doc.id
         if user not in grouped:
             grouped[user] = []
-        grouped[user].append((doc.id, data))
+        grouped[user].append(data)
 
     return grouped
 
-submissions_by_user = get_submissions_by_user()
+grouped_submissions = load_submissions_grouped()
 
-# --- Researcher selection ---
-st.markdown("### Researchers with submissions")
-selected_email = st.selectbox("Select a researcher to view submissions", list(submissions_by_user.keys()))
+# --- Researcher List View ---
+st.markdown("## 👥 Researchers")
 
-if selected_email:
-    user_submissions = submissions_by_user[selected_email]
+for researcher_email, submissions in grouped_submissions.items():
+    total = len(submissions)
+    approved = sum(1 for s in submissions if s.get("status") == "approved")
+    rejected = sum(1 for s in submissions if s.get("status") == "rejected")
 
-    # --- CSV Export Button ---
-    def to_flat_records(submissions):
-        flat = []
-        for doc_id, data in submissions:
-            for eval in data.get("model_evaluations", []):
-                flat.append({
-                    "submission_id": doc_id,
-                    "submitted_at": data.get("submitted_at", ""),
-                    "status": data.get("status", ""),
-                    "system_prompt": data.get("system_prompt", ""),
-                    "prompt": data.get("prompt", ""),
-                    "model": eval.get("model", ""),
-                    "response": eval.get("response", ""),
-                    "token_usage": eval.get("token_usage", ""),
-                    "model_break": eval.get("model_break", ""),
-                    "model_break_comments": eval.get("model_break_comments", "")
-                })
-        return pd.DataFrame(flat)
+    with st.expander(f"📧 {researcher_email} — Total: {total} | ✅ {approved} | ❌ {rejected}"):
+        if st.button(f"📂 View submissions from {researcher_email}", key=f"view_{researcher_email}"):
+            st.session_state["selected_researcher"] = researcher_email
 
-    csv_data = to_flat_records(user_submissions)
-    st.download_button("📤 Export All Submissions to CSV", data=csv_data.to_csv(index=False), file_name=f"{selected_email}_submissions.csv")
+# --- Submissions View ---
+if "selected_researcher" in st.session_state:
+    selected_email = st.session_state["selected_researcher"]
+    st.markdown(f"## 📄 Submissions from `{selected_email}`")
 
-    # --- Submissions table ---
-    st.markdown(f"### 📄 Submissions from `{selected_email}`")
+    selected_subs = grouped_submissions[selected_email]
 
-    for doc_id, data in user_submissions:
-        submitted_at = data.get("submitted_at", "unknown")
-        status = data.get("status", "pending")
-        short_id = doc_id[:8]
-        submitted_time = submitted_at.split("T")[0] if isinstance(submitted_at, str) else submitted_at
+    approved_subs_for_download = []
 
-        col1, col2, col3 = st.columns([2, 2, 2])
-        with col1:
-            st.markdown(f"**ID:** `{short_id}`")
-        with col2:
-            st.markdown(f"**Submitted:** {submitted_time}")
-        with col3:
-            status_badge = f"<span style='color:white;padding:4px;border-radius:5px;background-color: {'#FFA500' if status=='pending' else ('#28a745' if status=='approved' else '#dc3545')};'>{status.upper()}</span>"
-            st.markdown(f"**Status:** {status_badge}", unsafe_allow_html=True)
+    for sub in selected_subs:
+        sub_id = sub["id"]
+        status = sub.get("status", "pending")
+        badge_color = "#28a745" if status == "approved" else "#dc3545" if status == "rejected" else "#FFA500"
+        status_badge = f"<span style='color:white;padding:4px;border-radius:5px;background-color: {badge_color};'>{status.upper()}</span>"
 
-        with st.expander("🔍 View Full Submission"):
-            st.code(data["prompt"], language="text")
-            st.write(f"System Prompt: `{data.get('system_prompt', 'default')}`")
+        if st.button(f"📝 Submission ID: {sub_id[:8]}", key=sub_id):
+            st.session_state["selected_submission"] = sub_id
 
-            st.markdown("#### 📊 Model Evaluations")
-            for eval in data.get("model_evaluations", []):
-                st.markdown(f"**Model:** `{eval['model']}`")
-                st.markdown("**Response:**")
-                st.markdown(eval["response"])
-                st.write(f"Token usage: {eval.get('token_usage', 'N/A')}")
-                st.write(f"Model Break: {eval['model_break']}")
-                if eval["model_break"] == "Yes":
-                    st.write(f"Break Comments: {eval.get('model_break_comments', '')}")
-                st.markdown("---")
+        st.markdown(f"**Status:** {status_badge}", unsafe_allow_html=True)
+        st.markdown("---")
 
-        st.markdown("------")
+        if status == "approved":
+            approved_subs_for_download.append(sub)
+
+    # Download button for approved submissions
+    if approved_subs_for_download:
+        def flatten(subs):
+            flat = []
+            for data in subs:
+                for eval in data.get("model_evaluations", []):
+                    flat.append({
+                        "submission_id": data["id"],
+                        "submitted_at": data.get("submitted_at", ""),
+                        "status": data.get("status", ""),
+                        "system_prompt": data.get("system_prompt", ""),
+                        "prompt": data.get("prompt", ""),
+                        "model": eval.get("model", ""),
+                        "response": eval.get("response", ""),
+                        "token_usage": eval.get("token_usage", ""),
+                        "model_break": eval.get("model_break", ""),
+                        "model_break_comments": eval.get("model_break_comments", "")
+                    })
+            return pd.DataFrame(flat)
+
+        csv_df = flatten(approved_subs_for_download)
+        st.download_button("📤 Download All Approved Submissions", data=csv_df.to_csv(index=False),
+                           file_name=f"{selected_email}_approved.csv")
+
+# --- Submission Detail View ---
+if "selected_submission" in st.session_state:
+    sub_id = st.session_state["selected_submission"]
+    submission_doc = db.collection("submissions").document(sub_id).get()
+    if submission_doc.exists:
+        data = submission_doc.to_dict()
+
+        st.markdown("## 🔍 Submission Detail")
+        st.markdown(f"**Submission ID:** `{sub_id}`")
+        st.write(f"Submitted At: {data.get('submitted_at', 'unknown')}")
+        st.write(f"System Prompt: `{data.get('system_prompt', 'default')}`")
+        st.markdown("#### Prompt:")
+        st.code(data["prompt"], language="text")
+
+        st.markdown("#### 📊 Model Evaluations")
+        for eval in data.get("model_evaluations", []):
+            st.markdown(f"**Model:** `{eval['model']}`")
+            st.markdown("**Response:**")
+            st.markdown(eval["response"])
+            st.write(f"Token usage: {eval.get('token_usage', 'N/A')}")
+            st.write(f"Model Break: {eval['model_break']}")
+            if eval["model_break"] == "Yes":
+                st.write(f"Break Comments: {eval.get('model_break_comments', '')}")
+            st.markdown("---")
