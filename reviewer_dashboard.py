@@ -9,8 +9,11 @@ st.set_page_config(page_title="Reviewer Dashboard", layout="wide")
 db = init_firestore()
 
 # --- Auth Check ---
+# --- Auth Check ---
 if "authenticated_user" not in st.session_state or "user_role" not in st.session_state:
     login_user(db)
+    st.session_state["selected_researcher"] = None
+    st.session_state["selected_submission"] = None
     st.stop()
 
 if st.session_state["user_role"] != "reviewer":
