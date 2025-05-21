@@ -42,10 +42,16 @@ def load_submissions_grouped():
 grouped_submissions = load_submissions_grouped()
 
 # --- Researcher List View ---
-# Initialize navigation state
-if "selected_researcher" not in st.session_state:
+# --- Reset view when reviewer first lands ---
+# Only allow navigation to researcher view after button click
+if st.session_state.get("user_role") == "reviewer":
+    if "selected_researcher" not in st.session_state or not st.session_state["selected_researcher"]:
+        st.session_state["selected_researcher"] = None
+    if "selected_submission" not in st.session_state:
+        st.session_state["selected_submission"] = None
+else:
+    # If someone else logs in (e.g. a researcher), clear reviewer view state
     st.session_state["selected_researcher"] = None
-if "selected_submission" not in st.session_state:
     st.session_state["selected_submission"] = None
 
 # Step 1: Show list of researchers
@@ -148,3 +154,14 @@ else:
     if st.button("🔙 Back to Submission List"):
         st.session_state["selected_submission"] = None
         st.rerun()
+
+# Debug bloc
+
+with st.sidebar:
+    st.markdown("### 🧠 Debug Session")
+    st.json({
+        "user_role": st.session_state.get("user_role"),
+        "authenticated_user": st.session_state.get("authenticated_user"),
+        "selected_researcher": st.session_state.get("selected_researcher"),
+        "selected_submission": st.session_state.get("selected_submission")
+    })
