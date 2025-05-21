@@ -1,92 +1,70 @@
 import streamlit as st
 from firebase_config import init_firestore
 from auth_module import login_user
-from datetime import datetime
 import pandas as pd
 
-# --- Page Config ---
 st.set_page_config(page_title="Reviewer Dashboard", layout="wide")
 db = init_firestore()
 
-# --- Auth Check ---
-# --- Auth Check ---
+# --- Authentication Check ---
 if "authenticated_user" not in st.session_state or "user_role" not in st.session_state:
     login_user(db)
-    st.session_state["selected_researcher"] = None
-    st.session_state["selected_submission"] = None
     st.stop()
 
 if st.session_state["user_role"] != "reviewer":
     st.error("Access denied. Only reviewers can access this page.")
     st.stop()
 
-reviewer_email = st.session_state["authenticated_user"]
+# --- Force-clean navigation state on load ---
+if "nav_stage" not in st.session_state:
+    st.session_state.nav_stage = "list_users"
+    st.session_state.selected_researcher = None
+    st.session_state.selected_submission = None
+
 st.title("📋 Reviewer Dashboard")
 
-# --- Helper Function ---
+# --- Load all submissions grouped by researcher ---
 @st.cache_data
-def load_submissions_grouped():
-    submissions = db.collection("submissions").order_by("submitted_at", direction="DESCENDING").stream()
+def load_grouped():
     grouped = {}
-
-    for doc in submissions:
+    for doc in db.collection("submissions").stream():
         data = doc.to_dict()
-        user = data["user_email"]
         data["id"] = doc.id
-        if user not in grouped:
-            grouped[user] = []
-        grouped[user].append(data)
-
+        email = data.get("user_email", "unknown_user")
+        grouped.setdefault(email, []).append(data)
     return grouped
 
-grouped_submissions = load_submissions_grouped()
+grouped = load_grouped()
 
-# --- Researcher List View ---
-# --- Reset view when reviewer first lands ---
-# Only allow navigation to researcher view after button click
-if st.session_state.get("user_role") == "reviewer":
-    if "selected_researcher" not in st.session_state or not st.session_state["selected_researcher"]:
-        st.session_state["selected_researcher"] = None
-    if "selected_submission" not in st.session_state:
-        st.session_state["selected_submission"] = None
-else:
-    # If someone else logs in (e.g. a researcher), clear reviewer view state
-    st.session_state["selected_researcher"] = None
-    st.session_state["selected_submission"] = None
+# --- Navigation States ---
+if st.session_state.nav_stage == "list_users":
+    st.subheader("👥 Researchers")
+    for email, subs in grouped.items():
+        total = len(subs)
+        approved = sum(1 for s in subs if s.get("status") == "approved")
+        rejected = sum(1 for s in subs if s.get("status") == "rejected")
 
-# Step 1: Show list of researchers
-if st.session_state["selected_researcher"] is None:
-    st.markdown("## 👥 Researchers")
-    for researcher_email, submissions in grouped_submissions.items():
-        total = len(submissions)
-        approved = sum(1 for s in submissions if s.get("status") == "approved")
-        rejected = sum(1 for s in submissions if s.get("status") == "rejected")
+        if st.button(f"{email} (Total: {total} | ✅ {approved} | ❌ {rejected})", key=f"user_{email}"):
+            st.session_state.selected_researcher = email
+            st.session_state.nav_stage = "list_submissions"
+            st.rerun()
 
-        with st.expander(f"📧 {researcher_email} — Total: {total} | ✅ {approved} | ❌ {rejected}"):
-            if st.button(f"📂 View submissions from {researcher_email}", key=f"view_{researcher_email}"):
-                st.session_state["selected_researcher"] = researcher_email
-                st.rerun()
+elif st.session_state.nav_stage == "list_submissions":
+    email = st.session_state.selected_researcher
+    user_subs = grouped[email]
+    st.subheader(f"📄 Submissions from {email}")
 
-# Step 2: Show list of submission IDs for selected researcher
-elif st.session_state["selected_submission"] is None:
-    selected_email = st.session_state["selected_researcher"]
-    st.markdown(f"## 📄 Submissions from `{selected_email}`")
-    selected_subs = grouped_submissions[selected_email]
+    approved_subs = [s for s in user_subs if s.get("status") == "approved"]
 
-    # --- Filter approved submissions ---
-    approved_subs = [s for s in selected_subs if s.get("status") == "approved"]
-
-    # --- Export function ---
     def flatten(subs):
         flat = []
-        for data in subs:
-            for eval in data.get("model_evaluations", []):
+        for s in subs:
+            for eval in s.get("model_evaluations", []):
                 flat.append({
-                    "submission_id": data["id"],
-                    "submitted_at": data.get("submitted_at", ""),
-                    "status": data.get("status", ""),
-                    "system_prompt": data.get("system_prompt", ""),
-                    "prompt": data.get("prompt", ""),
+                    "submission_id": s["id"],
+                    "prompt": s["prompt"],
+                    "system_prompt": s.get("system_prompt", ""),
+                    "status": s.get("status", ""),
                     "model": eval.get("model", ""),
                     "response": eval.get("response", ""),
                     "token_usage": eval.get("token_usage", ""),
@@ -95,73 +73,52 @@ elif st.session_state["selected_submission"] is None:
                 })
         return pd.DataFrame(flat)
 
-    # --- Download approved submissions ---
     if approved_subs:
-        csv_df = flatten(approved_subs)
-        st.download_button(
-            label="📤 Download All Approved Submissions",
-            data=csv_df.to_csv(index=False),
-            file_name=f"{selected_email}_approved.csv"
-        )
+        df = flatten(approved_subs)
+        st.download_button("📥 Download Approved Submissions", df.to_csv(index=False), file_name=f"{email}_approved.csv")
 
-    st.markdown("### Submission List")
-    for sub in selected_subs:
-        sub_id = sub["id"]
-        status = sub.get("status", "pending")
-        badge_color = "#28a745" if status == "approved" else "#dc3545" if status == "rejected" else "#FFA500"
-        status_badge = f"<span style='color:white;padding:4px;border-radius:5px;background-color: {badge_color};'>{status.upper()}</span>"
+    for s in user_subs:
+        sub_id = s["id"]
+        status = s.get("status", "pending")
+        color = "#28a745" if status == "approved" else "#dc3545" if status == "rejected" else "#FFA500"
+        label = f"<span style='color:white;padding:4px;background:{color};border-radius:4px'>{status.upper()}</span>"
 
-        cols = st.columns([5, 1])
-        with cols[0]:
-            if st.button(f"📝 Submission ID: {sub_id[:8]}", key=sub_id):
-                st.session_state["selected_submission"] = sub_id
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            if st.button(f"View Submission {sub_id[:8]}", key=sub_id):
+                st.session_state.selected_submission = sub_id
+                st.session_state.nav_stage = "view_submission"
                 st.rerun()
-        with cols[1]:
-            st.markdown(status_badge, unsafe_allow_html=True)
+        with col2:
+            st.markdown(label, unsafe_allow_html=True)
 
-    # --- Back to researcher list ---
     if st.button("🔙 Back to Researchers"):
-        st.session_state["selected_researcher"] = None
+        st.session_state.nav_stage = "list_users"
         st.rerun()
 
-# Step 3: Show details for selected submission
-else:
-    sub_id = st.session_state["selected_submission"]
-    submission_doc = db.collection("submissions").document(sub_id).get()
+elif st.session_state.nav_stage == "view_submission":
+    sub_id = st.session_state.selected_submission
+    doc = db.collection("submissions").document(sub_id).get()
+    if not doc.exists:
+        st.error("Submission not found.")
+    else:
+        data = doc.to_dict()
+        st.subheader(f"🔍 Submission {sub_id}")
+        st.markdown(f"**Submitted at:** {data.get('submitted_at', 'N/A')}")
+        st.markdown(f"**System Prompt:** `{data.get('system_prompt', 'default')}`")
+        st.markdown("#### Prompt")
+        st.code(data["prompt"])
 
-    if submission_doc.exists:
-        data = submission_doc.to_dict()
-
-        st.markdown("## 🔍 Submission Detail")
-        st.markdown(f"**Submission ID:** `{sub_id}`")
-        st.write(f"Submitted At: {data.get('submitted_at', 'unknown')}")
-        st.write(f"System Prompt: `{data.get('system_prompt', 'default')}`")
-        st.markdown("#### Prompt:")
-        st.code(data["prompt"], language="text")
-
-        st.markdown("#### 📊 Model Evaluations")
+        st.markdown("### Model Evaluations")
         for eval in data.get("model_evaluations", []):
             st.markdown(f"**Model:** `{eval['model']}`")
-            st.markdown("**Response:**")
             st.markdown(eval["response"])
-            st.write(f"Token usage: {eval.get('token_usage', 'N/A')}")
-            st.write(f"Model Break: {eval['model_break']}")
+            st.markdown(f"Tokens: {eval.get('token_usage', 'N/A')}")
+            st.markdown(f"Break: {eval['model_break']}")
             if eval["model_break"] == "Yes":
-                st.write(f"Break Comments: {eval.get('model_break_comments', '')}")
+                st.markdown(f"Comment: {eval.get('model_break_comments', '')}")
             st.markdown("---")
 
-    # --- Back to submission list ---
     if st.button("🔙 Back to Submission List"):
-        st.session_state["selected_submission"] = None
+        st.session_state.nav_stage = "list_submissions"
         st.rerun()
-
-# Debug bloc
-
-with st.sidebar:
-    st.markdown("### 🧠 Debug Session")
-    st.json({
-        "user_role": st.session_state.get("user_role"),
-        "authenticated_user": st.session_state.get("authenticated_user"),
-        "selected_researcher": st.session_state.get("selected_researcher"),
-        "selected_submission": st.session_state.get("selected_submission")
-    })
