@@ -2,7 +2,6 @@ import streamlit as st
 from auth_module import login_user
 from firebase_config import init_firestore
 from prompts import default_prompt, lean_prompt
-from usage_logger import log_prompt_usage
 from llm_runner import get_supported_models, run_models
 from review_ui import render_model_responses, submit_review
 
@@ -32,6 +31,7 @@ raw_prompt = st.text_area("", key="prompt_input", height=150)
 # --- System Prompt Selection ---
 st.markdown("#### System Prompt")
 system_prompt_option = st.radio("Choose System Prompt", ["Default System Prompt", "Custom System Message", "Lean4 System Message"])
+
 if system_prompt_option == "Default System Prompt":
     with st.expander("View Default System Prompt", expanded=False):
         st.text_area("Default System Prompt", value=default_prompt, height=200, disabled=True, label_visibility="collapsed")
@@ -41,6 +41,7 @@ elif system_prompt_option == "Lean4 System Message":
     with st.expander("View Lean4 System Prompt", expanded=False):
         st.text_area("Lean4 System Prompt", value=lean_prompt, height=200, disabled=True, label_visibility="collapsed")
     system_prompt = lean_prompt
+
 else:
     custom_prompt = st.text_area("Enter Custom System Message", key="custom_system", height=150)
     system_prompt = custom_prompt
@@ -59,7 +60,6 @@ else:
 if st.button("Call LLM"):
     with st.spinner("Calling Model/s"):
         st.session_state["model_results"] = run_models(models, system_prompt, raw_prompt)
-        log_prompt_usage(db, user_email, raw_prompt, models)
 
 # --- Display + Review ---
 results = st.session_state.get("model_results", [])
