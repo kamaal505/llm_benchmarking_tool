@@ -38,17 +38,31 @@ def render_model_responses(results):
 
     return model_evaluations
 
-def submit_review(db, user_email, raw_prompt, system_prompt, prompt_mode, model_evaluations):
+def submit_review(db, raw_prompt, system_prompt, prompt_mode, model_evaluations):
+    # --- Ensure user is logged in and has correct role ---
+    if "authenticated_user" not in st.session_state or "user_role" not in st.session_state:
+        st.error("You must be logged in to submit.")
+        return
+
+    if st.session_state["user_role"] != "researcher":
+        st.error("Only researchers can submit prompts.")
+        return
+
+    user_email = st.session_state["authenticated_user"]
+
     try:
         submission = {
             "user_email": user_email,
+            "submitted_by_role": st.session_state["user_role"],
             "prompt": raw_prompt,
             "system_prompt": system_prompt if prompt_mode == "Custom System Message" else "default",
             "model_evaluations": model_evaluations,
             "submitted_at": datetime.utcnow().isoformat(),
             "status": "pending"
         }
+
         doc_ref = db.collection("submissions").add(submission)
-        st.success(f"Submission saved. ID: {doc_ref[1].id}")
+        st.success(f"✅ Submission saved successfully. ID: `{doc_ref[1].id}`")
+
     except Exception as e:
-        st.error(f"Failed to submit: {e}")
+        st.error(f"❌ Failed to submit: {e}")
